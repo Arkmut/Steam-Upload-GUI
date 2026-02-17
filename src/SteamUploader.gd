@@ -8,8 +8,8 @@ const BATCH_CONTENT : String	= "@echo off\nSTART cmd {mode} \"\"{path}steamcmd.e
 const STEAM_GUARD : String		= "cd {path} && {steam_cmd} \"set_steam_guard_code {guard_code}\""
 const TEXT_WAIT_CLOSE : String	= "Please close Steam shell when it is done to continue.\nUploading App ID '%s'"
 const TEXT_WAIT : String		= "Waiting for Content Builder and Upload.\nUploading App ID '%s'"
-const AppGroup : PackedScene	= preload("res://AppGroup.tscn")
-
+const APP_GROUP : PackedScene	= preload("res://AppGroup.tscn")
+const USER_PANEL : PackedScene	= preload("res://UserPanel.tscn")
 var local_dir : String			= ""
 var contentbuilder_dir : String = ""
 var scripts_path : String		= ""
@@ -33,15 +33,16 @@ func _ready() -> void:
 	contentbuilder_dir = local_dir
 	
 	# Load local Settings saved from last Upload
-	var save_pw_file := File.new()
 	var loaded_file_content := {}
-	if save_pw_file.file_exists(local_dir + SETTINGS_FILE):
-		save_pw_file.open_encrypted_with_pass(local_dir + SETTINGS_FILE, File.READ, ENCRYPT_PW)
-		var settings_json_result : JSONParseResult = JSON.parse(save_pw_file.get_as_text())
-		if settings_json_result.result:
-			users = settings_json_result.result.users
-			contentbuilder_dir = settings_json_result.result.path
-	save_pw_file.close()
+	if FileAccess.file_exists(local_dir + SETTINGS_FILE):
+		var file:=FileAccess.open_encrypted_with_pass(local_dir + SETTINGS_FILE, FileAccess.READ, ENCRYPT_PW)
+		var settings_json_result := JSON.new()
+		settings_json_result.parse(file.get_as_text())
+		
+		if settings_json_result.data:
+			users = settings_json_result.data.users
+			contentbuilder_dir = settings_json_result.data.path
+		file.close()
 	for u in users.keys():
 		if not users[u].has("save_pw") or not users[u].has("pw") or not users[u].has("username"):
 			users.erase(u)
@@ -53,7 +54,7 @@ func _ready() -> void:
 
 func clear_apps():
 	# Clear old list of Steam apps...
-	if not steam_apps.empty():
+	if not steam_apps.is_empty():
 		for steam_app in steam_apps:
 			steam_app.queue_free()
 		steam_apps.clear()
@@ -63,16 +64,14 @@ func generate_apps_from_vdfs():
 	clear_apps()
 	scripts_path = contentbuilder_dir + "/scripts/"
 	# Get all the files located in the /scripts/ folder
-	var dir := Directory.new()
-	if dir.dir_exists(scripts_path):
+	if DirAccess.dir_exists_absolute(scripts_path):
 		$"%AppsErrorMessage".hide()
 		$"%AppsErrorOpenDirButton".hide()
 		var files : Array = list_vdf_files_in_directory(scripts_path)
 		for file_name in files:
-			var file := File.new()
-			if not file.file_exists(scripts_path + file_name):
+			if not FileAccess.file_exists(scripts_path + file_name):
 				continue
-			file.open(scripts_path + file_name, File.READ)
+			var file:=FileAccess.open(scripts_path + file_name, FileAccess.READ)
 			var file_content : String = file.get_as_text()
 			file_content = file_content.to_lower()
 			file.close()
@@ -81,10 +80,10 @@ func generate_apps_from_vdfs():
 				continue
 			
 			# Create the App Group elements
-			var new_app_group : AppGroup = AppGroup.instance()
+			var new_app_group : AppGroup = APP_GROUP.instantiate()
 			new_app_group.setup(get_appid(file_content), get_desc(file_content), file_name)
 			$"%AppsToUpload".add_child(new_app_group)
-			$"%SelectedAppsCheckBox".pressed = true
+			$"%SelectedAppsCheckBox".button_pressed = true
 			steam_apps.append(new_app_group)
 	else:
 		$"%AppsErrorMessage".show()
@@ -92,19 +91,17 @@ func generate_apps_from_vdfs():
 
 
 func check_contentbuilder_path() -> bool:
-	var dir := Directory.new()
 	builder_path = contentbuilder_dir + "/builder/"
-	if !dir.dir_exists(builder_path):
+	if !DirAccess.dir_exists_absolute(builder_path):
 		clear_apps()
-		$"%SettingsCheckBox".pressed = true
+		$"%SettingsCheckBox".button_pressed = true
 		$"%AppsErrorMessage".show()
 		$"%AppsErrorOpenDirButton".show()
 		$"%UploadButton".text = "Builder path not found (\"tools\\ContentBuilder\\builder\\\")!"
 		$"%UploadButton".disabled = true
 		return false
 	else:
-		var file := File.new()
-		if !file.file_exists(builder_path + STEAMCMD):
+		if !FileAccess.file_exists(builder_path + STEAMCMD):
 			$"%AppsErrorMessage".show()
 			$"%AppsErrorOpenDirButton".show()
 			$"%UploadButton".text = "steamcmd.exe not found (\"tools\\ContentBuilder\\builder\\steamcmd.exe\")!"
@@ -132,9 +129,9 @@ func get_desc(_string:String) -> String:
 
 func list_vdf_files_in_directory(path:String) -> Array:
 	var files = []
-	var dir = Directory.new()
-	dir.open(path)
-	dir.list_dir_begin(true)
+	var dir = DirAccess.open(path)
+	dir.include_hidden = true
+	dir.list_dir_begin()
 	
 	while true:
 		var file = dir.get_next()
@@ -149,13 +146,12 @@ func list_vdf_files_in_directory(path:String) -> Array:
 
 func save_settings() -> void:
 	# Save the Settings
-	var save_pw_file := File.new()
-	save_pw_file.open_encrypted_with_pass(local_dir + SETTINGS_FILE, File.WRITE, ENCRYPT_PW)
+	var save_pw_file := FileAccess.open_encrypted_with_pass(local_dir + SETTINGS_FILE, FileAccess.WRITE, ENCRYPT_PW)
 	var settings_dict := {
 		"path" : $"%ContentBuilderPathEdit".text,
 		"users" : users
 		}
-	save_pw_file.store_string(JSON.print(settings_dict))
+	save_pw_file.store_string(JSON.stringify(settings_dict))
 	save_pw_file.close()
 
 
@@ -165,12 +161,22 @@ func _on_UploadButton_pressed() -> void:
 	var selected_user := get_selected_user_credentials()
 	
 	if selected_user.pw == "":
-		$"%PasswordMissingTween".interpolate_property($"%PasswordMissing", "rect_position:x", 0, 5, 0.05, Tween.TRANS_SINE, Tween.EASE_OUT)
-		$"%PasswordMissingTween".interpolate_property($"%PasswordMissing", "rect_position:x", 5, -5, 0.1, Tween.TRANS_SINE, Tween.EASE_OUT, 0.05)
-		$"%PasswordMissingTween".interpolate_property($"%PasswordMissing", "rect_position:x", -5, 0, 0.05, Tween.TRANS_SINE, Tween.EASE_OUT, 0.15)
-		$"%PasswordMissingTween".interpolate_property($"%PasswordMissing", "modulate:a", 0.5, 1.0, 0.05, Tween.TRANS_SINE, Tween.EASE_OUT)
-		$"%PasswordMissingTween".interpolate_property($"%PasswordMissing", "modulate:a", 1.0, 0.5, 0.5, Tween.TRANS_SINE, Tween.EASE_OUT, 0.05)
-		$"%PasswordMissingTween".start()
+		var passwordTween := get_tree().create_tween()
+		# 1. Shake Sequence (Moves the X position)
+		passwordTween.tween_property($"%PasswordMissing", "position:x", 5.0, 0.05)\
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		passwordTween.tween_property($"%PasswordMissing", "position:x", -5.0, 0.1)\
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		passwordTween.tween_property($"%PasswordMissing", "position:x", 0.0, 0.05)\
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		
+		# 2. Fade Sequence (Runs simultaneously with the shake)
+		# Using .parallel() makes the next tween start at the same time as the previous one
+		passwordTween.parallel().tween_property($"%PasswordMissing", "modulate:a", 1.0, 0.05)\
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		passwordTween.tween_property($"%PasswordMissing", "modulate:a", 0.5, 0.5)\
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		
 		return
 	
 	# Create an array of the selected vdfs
@@ -179,18 +185,16 @@ func _on_UploadButton_pressed() -> void:
 	for app in steam_apps:
 		if app.is_selected() and app.visible:
 			selected_vdfs.append({"file": app.vdf_file_name, "app_id": app.app_id})
-			var vdf_file := File.new()
-			vdf_file.open(scripts_path + app.vdf_file_name, File.READ)
+			var vdf_file := FileAccess.open(scripts_path + app.vdf_file_name, FileAccess.READ)
 			var vdf_content : String = vdf_file.get_as_text()
 			vdf_file.close()
-			var as_lines : PoolStringArray = vdf_content.split("\n")
+			var as_lines : PackedStringArray = vdf_content.split("\n")
 			for i in as_lines.size():
 				if as_lines[i].strip_edges().begins_with("\"desc\""):
 					as_lines[i] = as_lines[i].split("\"desc\"")[0] + ("\"desc\" \"%s\"" % app.desc)
 					break
-			var vdf_write_file := File.new()
-			vdf_write_file.open(scripts_path + app.vdf_file_name, File.WRITE)
-			vdf_write_file.store_string(as_lines.join("\n"))
+			var vdf_write_file := FileAccess.open(scripts_path + app.vdf_file_name, FileAccess.WRITE)
+			vdf_write_file.store_string("\n".join(as_lines))
 			vdf_write_file.close()
 	
 	# Upload each App from the selected vdfs
@@ -198,22 +202,20 @@ func _on_UploadButton_pressed() -> void:
 	# That 'blocking' on OS.execute() while showing the shell will lead to an empty
 	# shell window as the stdout is consumed.
 	for upload in selected_vdfs:
-		var bat_file := File.new()
 		var vdf_path = "\"../scripts/%s\"" % upload.file
-		var args : PoolStringArray = ["+login", selected_user.username, selected_user.pw, "+run_app_build", vdf_path, "+quit"]
-		var shell_mode : String = "/k" if $"%KeepShellOpen".pressed else "/c"
+		var args := ["+login", selected_user.username, selected_user.pw, "+run_app_build", vdf_path, "+quit"]
+		var shell_mode : String = "/k" if $"%KeepShellOpen".button_pressed else "/c"
 		# Open the Popup informing the user that this is paused until the shells are closed
 		$"%SteamUploadingPopup".popup()
-		$"%SteamUploadLabel".text = TEXT_WAIT_CLOSE % upload.app_id if $"%KeepShellOpen".pressed else TEXT_WAIT % upload.app_id
-		yield(get_tree(), "idle_frame")
-		bat_file.open(local_dir + "godot_exec.bat", File.WRITE)
-		bat_file.store_string(BATCH_CONTENT.format({"mode": shell_mode, "path": builder_path, "args": args.join(" ")}))
+		$"%SteamUploadLabel".text = TEXT_WAIT_CLOSE % upload.app_id if $"%KeepShellOpen".button_pressed else TEXT_WAIT % upload.app_id
+		await get_tree().process_frame
+		var bat_file := FileAccess.open(local_dir + "/godot_exec.bat", FileAccess.WRITE)
+		bat_file.store_string(BATCH_CONTENT.format({"mode": shell_mode, "path": builder_path, "args": " ".join(args)}))
 		bat_file.close()
-		OS.execute(local_dir + "godot_exec.bat", [], true, [])
+		OS.execute(local_dir + "/godot_exec.bat", [], [],true)
 	
-	yield(get_tree(), "idle_frame")
-	var remove_bat := Directory.new()
-	remove_bat.remove(local_dir + "godot_exec.bat")
+	await get_tree().process_frame
+	DirAccess.open(local_dir).remove("godot_exec.bat")
 	$"%SteamUploadingPopup".hide()
 
 
@@ -224,7 +226,7 @@ func _on_SetSteamGuardButton_pressed():
 
 func _on_SendSteamGuardButton_pressed():
 	var cmd_arg = STEAM_GUARD.format({"path": builder_path, "steam_cmd": STEAMCMD, "guard_code": $"%SteamGuardCodeEdit".text, })
-	OS.execute("cmd", ["/c", cmd_arg], false, [], true, true)
+	OS.execute("cmd", ["/c", cmd_arg], [],false, true)
 	$"%SteamGuardPopup".hide()
 
 
@@ -252,11 +254,11 @@ func _on_RefreshButton_pressed():
 
 
 func _on_popup_about_to_show():
-	$PopupLayer/FileDialogBG.show()
+	$PopupLayer/UserDialogBG.show()
 
 
 func _on_popup_hide():
-	$PopupLayer/FileDialogBG.hide()
+	$PopupLayer/UserDialogBG.hide()
 
 
 func _on_GitHubLinkButton_pressed():
@@ -274,7 +276,7 @@ func _on_SelectedAppsCheckBox_toggled(button_pressed):
 
 func _on_AppFilter_text_changed(filter):
 	if filter == "":
-		$"%SelectedAppsCheckBox".pressed = true
+		$"%SelectedAppsCheckBox".button_pressed = true
 		for a in steam_apps:
 			a.show()
 	else:
@@ -297,27 +299,27 @@ func update_users(and_selection:=true):
 		c.queue_free()
 	if and_selection:
 		$"%UserSelectionButton".clear()
-	if users.empty():
+	if users.is_empty():
 		$"%UsersHbox".hide()
 		$"%AddUsersButton".show()
 		return
 	$"%UsersHbox".show()
 	$"%AddUsersButton".hide()
 	for u in users.keys():
-		var new_user = preload("res://UserPanel.tscn").instance()
+		var new_user : UserPanel = USER_PANEL.instantiate()
 		new_user.username = u
 		new_user.save_pw = users[u].save_pw
 		$"%UserList".add_child(new_user)
 		if and_selection:
 			$"%UserSelectionButton".add_item(u)
-		new_user.connect("delete_user", self, "on_delete_user", [u])
-		new_user.connect("save_password", self, "on_save_password", [u])
+		new_user.delete_user.connect(func(): on_delete_user(u))
+		new_user.save_password.connect(func(toggled): on_save_password(u,toggled))
 	if and_selection:
 		$"%UserSelectionButton".select(0)
 		_on_UserSelectionButton_item_selected(0)
 
 
-func on_add_user(_text:String):
+func on_add_user():
 	var new_user : Dictionary = create_user_dict($"%AddUserNameLineEdit".text)
 	users[$"%AddUserNameLineEdit".text] = new_user
 	$"%AddUserNameLineEdit".text = ""
@@ -349,7 +351,7 @@ func _on_CloseUserManagementButton_pressed():
 func _on_SavePW_pressed():
 	var selected_user : String = $"%UserSelectionButton".get_item_text($"%UserSelectionButton".get_selected_id())
 	if users.has(selected_user):
-		users[selected_user].save_pw = $"%SavePW".pressed
+		users[selected_user].save_pw = $"%SavePW".button_pressed
 	update_users(false)
 
 
@@ -364,7 +366,7 @@ func get_selected_user_credentials() -> Dictionary:
 func _on_UserSelectionButton_item_selected(index):
 	var selected_user : String = $"%UserSelectionButton".get_item_text(index)
 	if users.has(selected_user):
-		$"%SavePW".pressed = users[selected_user].save_pw
+		$"%SavePW".button_pressed = users[selected_user].save_pw
 		if users[selected_user].save_pw:
 			$"%UserPasswordEdit".text = users[selected_user].pw
 		else:

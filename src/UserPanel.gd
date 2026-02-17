@@ -1,4 +1,4 @@
-extends PanelContainer
+class_name UserPanel extends PanelContainer
 
 signal delete_user
 signal save_password
@@ -8,7 +8,7 @@ var save_pw := true
 
 func _ready():
 	$HBoxContainer/Label.text = username
-	$HBoxContainer/SavePwdCheckBox.pressed = save_pw
+	$HBoxContainer/SavePwdCheckBox.button_pressed = save_pw
 
 
 func _on_DeleteButton_pressed():
@@ -16,4 +16,4 @@ func _on_DeleteButton_pressed():
 
 
 func _on_SavePwdCheckBox_pressed():
-	emit_signal("save_password", $HBoxContainer/SavePwdCheckBox.pressed)
+	emit_signal("save_password", $HBoxContainer/SavePwdCheckBox.button_pressed)

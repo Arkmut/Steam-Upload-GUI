@@ -1,5 +1,6 @@
-
+.idea/
 # Godot-specific ignores
+.godot/
 .import/
 builder/
 scripts/
